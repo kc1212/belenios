@@ -1,9 +1,11 @@
+use std::ops::Add;
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::scalar::Scalar;
-use sha3::{Sha3_512};
+use sha3::Sha3_512;
 use rand_core::{CryptoRng, RngCore};
 
+const MAX_SUM: u32 = 100;
 pub(crate) const G: EdwardsPoint = constants::ED25519_BASEPOINT_POINT;
 const ORDER: Scalar = constants::BASEPOINT_ORDER;
 const PREFIX_SCHNORR: [u8; 8] = *b"SCHNORRx";
@@ -14,6 +16,11 @@ fn generic_keygen<R: CryptoRng + RngCore>(rng: &mut R) -> (Scalar, EdwardsPoint)
     let x = Scalar::random(rng);
     let y = x * G;
     (x, y)
+}
+
+// TODO(kc1212): make a new type for ciphertext and impl Add
+pub(crate) fn add_tuple<T: Copy + Add<Output = T>>(a: &(T, T), b: &(T, T)) -> (T, T) {
+    (a.0 + b.0, a.1 + b.1)
 }
 
 pub mod binary_cipher {
@@ -33,17 +40,19 @@ pub mod binary_cipher {
         encrypt_with_r(pk, msg, &r)
     }
 
-    pub fn decrypt(sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint)) -> Option<bool> {
+    pub fn decrypt(sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint)) -> Option<u32> {
         let (a, b) = ct;
         let gv = b - (sk * a);
+        let mut tmp = Scalar::zero();
 
-        if Scalar::from(0u32) * G == gv {
-            Some(false)
-        } else if Scalar::from(1u32) * G == gv {
-            Some(true)
-        } else {
-            None
+        // TODO(kc1212): not constant time
+        for i in 0..MAX_SUM {
+            if tmp * G == gv {
+                return Some(i)
+            }
+            tmp += Scalar::one();
         }
+        None
     }
 }
 
@@ -206,7 +215,12 @@ mod test {
         let msg = true;
         let ct = binary_cipher::encrypt(&mut rng, &pk, msg);
         let pt = binary_cipher::decrypt(&sk, &ct).unwrap();
-        assert_eq!(msg, pt);
+        assert_eq!(msg as u32, pt);
+
+        let ct_0 = binary_cipher::encrypt(&mut rng, &pk, false);
+        let ct_1 = binary_cipher::encrypt(&mut rng, &pk, true);
+        assert_eq!(binary_cipher::decrypt(&sk, &add_tuple(&ct, &ct_0)), Some(1));
+        assert_eq!(binary_cipher::decrypt(&sk, &add_tuple(&ct, &add_tuple(&ct_0, &ct_1))), Some(2));
     }
 
     #[test]
@@ -245,13 +259,14 @@ mod test {
             let pt = true;
             let (ct, proof) = zkp_binary_ptxt::prove(&mut rng, &pk, pt);
             assert!(zkp_binary_ptxt::verify(&pk, &ct, &proof));
-            assert_eq!(binary_cipher::decrypt(&sk, &ct), Some(pt));
+            assert_eq!(binary_cipher::decrypt(&sk, &ct), Some(pt as u32));
         }
         {
             let pt = false;
             let (ct, proof) = zkp_binary_ptxt::prove(&mut rng, &pk, pt);
             assert!(zkp_binary_ptxt::verify(&pk, &ct, &proof));
-            assert_eq!(binary_cipher::decrypt(&sk, &ct), Some(pt));
+            assert_eq!(binary_cipher::decrypt(&sk, &ct), Some(pt as u32));
         }
+        // TODO(kc1212): test failures
     }
 }
