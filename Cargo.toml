@@ -7,6 +7,11 @@ edition = "2021"
 
 [dependencies]
 curve25519-dalek = "3.2.1"
-rand_core = "0.5.1" # must match with dalek
+rand_core = "0.5.1" # must match with curve25519-dalek
+sha3 = "0.9.1" # must match curve25519-dalek
+thiserror = "1"
+
+[dev-dependencies]
 rand_chacha = "0.2.2" # must match with rand_core
-sha3 = "0.9.1" # must match dalek
+quickcheck = "1"
+quickcheck_macros = "1"

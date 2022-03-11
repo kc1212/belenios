@@ -87,10 +87,10 @@ pub mod schnorr {
 }
 
 pub mod zkp_dl {
-    // Section 2.1 https://hal.inria.fr/hal-01576379/document plus Fiet-Shamir
+    // Section 2.1 https://hal.inria.fr/hal-01576379/document plus Fiat-Shamir
     use super::*;
 
-    fn fiet_shamir(h: &EdwardsPoint, r: &EdwardsPoint) -> Scalar {
+    fn fiat_shamir(h: &EdwardsPoint, r: &EdwardsPoint) -> Scalar {
         // H(domain_separation || G || g^x || g^k)
         let mut buf = vec![];
         buf.extend_from_slice(&PREFIX_ZKP_DL);
@@ -105,14 +105,14 @@ pub mod zkp_dl {
         let k = Scalar::random(rng);
         let r = k * G;
         let h = x * G;
-        let e = fiet_shamir(&h, &r);
+        let e = fiat_shamir(&h, &r);
         let s = k + x * e;
         (r, s)
     }
 
     pub fn verify(h: &EdwardsPoint, proof: &(EdwardsPoint, Scalar)) -> bool {
         let (r, s) = proof;
-        let e = fiet_shamir(&h, &r);
+        let e = fiat_shamir(&h, &r);
         r == &(s * G - e * h)
     }
 }
@@ -120,7 +120,7 @@ pub mod zkp_dl {
 pub mod zkp_binary_ptxt {
     use super::*;
 
-    fn fiet_shamir(h: &EdwardsPoint, ct: &(EdwardsPoint, EdwardsPoint), commitment: &[(EdwardsPoint, EdwardsPoint); 2]) -> Scalar {
+    fn fiat_shamir(h: &EdwardsPoint, ct: &(EdwardsPoint, EdwardsPoint), commitment: &[(EdwardsPoint, EdwardsPoint); 2]) -> Scalar {
         // H(domain_separation || G || ct || commitment)
         // TODO(kc1212): there might be other domain separation issues
         let mut buf = vec![];
@@ -157,7 +157,7 @@ pub mod zkp_binary_ptxt {
         } else {
             [(ai, bi), (aj, bj)]
         };
-        let e = fiet_shamir(&h, &ct, &commitment);
+        let e = fiat_shamir(&h, &ct, &commitment);
 
         let sigmai = e - sigmaj;
         let rhoi = w + r * sigmai;
@@ -172,7 +172,7 @@ pub mod zkp_binary_ptxt {
     pub fn verify(h: &EdwardsPoint, ct: &(EdwardsPoint, EdwardsPoint), proof: &([(EdwardsPoint, EdwardsPoint); 2], [(Scalar, Scalar); 2])) -> bool {
         let commitment = proof.0;
         let response = proof.1;
-        let e = fiet_shamir(h, ct, &commitment);
+        let e = fiat_shamir(h, ct, &commitment);
         if e != response.iter().map(|x| x.0).sum() {
             return false;
         }
@@ -197,8 +197,10 @@ pub mod zkp_binary_ptxt {
 #[cfg(test)]
 mod test {
     use curve25519_dalek::traits::Identity;
+    use quickcheck::TestResult;
     use rand_chacha::ChaChaRng;
     use rand_core::SeedableRng;
+    use quickcheck_macros::quickcheck;
     use super::*;
 
     #[test]
@@ -206,34 +208,69 @@ mod test {
         assert_eq!(ORDER * G, EdwardsPoint::identity());
     }
 
-    #[test]
-    fn test_cipher() {
-        // TODO(kc1212): quickcheck
+    #[quickcheck]
+    fn quickcheck_cipher(msg: bool) -> bool {
         let mut rng = ChaChaRng::from_entropy();
         let (sk, pk) = binary_cipher::keygen(&mut rng);
-
-        let msg = true;
         let ct = binary_cipher::encrypt(&mut rng, &pk, msg);
         let pt = binary_cipher::decrypt(&sk, &ct).unwrap();
-        assert_eq!(msg as u32, pt);
-
-        let ct_0 = binary_cipher::encrypt(&mut rng, &pk, false);
-        let ct_1 = binary_cipher::encrypt(&mut rng, &pk, true);
-        assert_eq!(binary_cipher::decrypt(&sk, &add_tuple(&ct, &ct_0)), Some(1));
-        assert_eq!(binary_cipher::decrypt(&sk, &add_tuple(&ct, &add_tuple(&ct_0, &ct_1))), Some(2));
+        msg as u32 == pt
     }
 
-    #[test]
-    fn test_signature() {
-        // TODO(kc1212): quickcheck
+    #[quickcheck]
+    fn quickcheck_cipher_bad_key(msg: bool) -> bool {
+        // TODO(kc1212): write this test
+        true
+    }
+
+    #[quickcheck]
+    fn quickcheck_cipher_homomorphism(msgs: Vec<bool>) -> TestResult {
+        if msgs.len() < 1 || msgs.len() > 10 {
+            return TestResult::discard();
+        }
+
+        let mut rng = ChaChaRng::from_entropy();
+        let (sk, pk) = binary_cipher::keygen(&mut rng);
+        let cts: Vec<(EdwardsPoint, EdwardsPoint)> = msgs.iter().map(|msg| {
+            binary_cipher::encrypt(&mut rng, &pk, *msg)
+        }).collect();
+
+        let mut sum_ct = cts[0];
+        for ct in &cts[1..] {
+            sum_ct = add_tuple(ct, &sum_ct);
+        }
+        let pt = binary_cipher::decrypt(&sk, &sum_ct).unwrap();
+        let expected = msgs.iter().map(|b| *b as u32).sum();
+        TestResult::from_bool(pt == expected)
+    }
+
+    #[quickcheck]
+    fn quickcheck_signature(msg: Vec<u8>) -> bool {
         let mut rng = ChaChaRng::from_entropy();
         let (sk, vk) = schnorr::keygen(&mut rng);
-        let msg1 = *b"bonjour";
-        let sig1 = schnorr::sign(&mut rng, &sk, &msg1);
-        assert!(schnorr::verify(&vk, &msg1, &sig1));
+        let sig = schnorr::sign(&mut rng, &sk, &msg);
+        schnorr::verify(&vk, &msg, &sig)
+    }
 
-        let msg2 = *b"ca va";
-        assert!(!schnorr::verify(&vk, &msg2, &sig1));
+    #[quickcheck]
+    fn quickcheck_signature_bad_vk(msg: Vec<u8>) -> bool {
+        let mut rng = ChaChaRng::from_entropy();
+        let (sk, _) = schnorr::keygen(&mut rng);
+        let sig = schnorr::sign(&mut rng, &sk, &msg);
+
+        let (_, bad_vk) = schnorr::keygen(&mut rng);
+        !schnorr::verify(&bad_vk, &msg, &sig)
+    }
+
+    #[quickcheck]
+    fn quickcheck_signature_bad_msg(msgs: (Vec<u8>, Vec<u8>)) -> TestResult {
+        if msgs.0 == msgs.1 {
+            return TestResult::discard();
+        }
+        let mut rng = ChaChaRng::from_entropy();
+        let (sk, vk) = schnorr::keygen(&mut rng);
+        let sig = schnorr::sign(&mut rng, &sk, &msgs.0);
+        TestResult::from_bool(!schnorr::verify(&vk, &msgs.1, &sig))
     }
 
     #[test]
