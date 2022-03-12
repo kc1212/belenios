@@ -5,55 +5,57 @@ use rand_core::{CryptoRng, RngCore};
 use crate::crypto::*;
 use crate::error::BeleniosError;
 
+/// Ballot is casted by a user
+/// which contains an encrypted vote, a proof of binary plaintext and a signature.
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub struct Vote {
+pub struct Ballot {
     pub(crate) ct: (EdwardsPoint, EdwardsPoint),
     pub(crate) proof: zkp_binary_ptxt::Proof,
     pub(crate) signature: schnorr::Signature,
 }
 
-impl Vote {
+impl Ballot {
     pub(crate) fn verify(&self, vk: &EdwardsPoint, pk: &EdwardsPoint) -> bool {
         schnorr::verify_ct(vk, &self.ct, &self.signature) && zkp_binary_ptxt::verify(pk, &self.ct, &self.proof)
     }
 }
 
+/// Voter represents the state of a user.
 pub struct Voter {
     sk: Scalar,
     vk: EdwardsPoint,
     pk: EdwardsPoint, // from polling station
-    vote: Option<Vote>,
+    ballot: Option<Ballot>,
 }
 
 impl Voter {
+    /// Create a new voter which uses a given secret key from the registrar and holds the master public key.
     pub fn new(sk: Scalar, pk: &EdwardsPoint) -> Voter {
         let vk = sk * G;
         Voter {
-            sk, vk, pk: *pk, vote: None
+            sk, vk, pk: *pk, ballot: None
         }
     }
 
+    /// Cast a vote and output the ballot with the verification key.
     pub fn vote<R: RngCore + CryptoRng>(&mut self, rng: &mut R, vote: bool)
-        -> (Vote, EdwardsPoint) {
+        -> (Ballot, EdwardsPoint) {
         let (ct, proof) = zkp_binary_ptxt::prove(rng, &self.pk, vote);
         let signature = schnorr::sign_ct(rng, &self.sk, &ct);
-        let vote = Vote { ct, proof, signature };
-        self.vote = Some(vote);
-        (vote, self.vk)
+        let ballot = Ballot { ct, proof, signature };
+        self.ballot = Some(ballot);
+        (ballot, self.vk)
     }
 
-    pub fn get_vk(&self) -> EdwardsPoint {
-        self.vk
-    }
-
-    pub fn check_bb(&self, bb: &HashMap<[u8; 32], Vote>) -> Result<(), BeleniosError> {
-        let my_vote = self.vote.unwrap();
+    /// Check the bulletin board in the polling station for the vote that was casted.
+    pub fn check_bb(&self, bb: &HashMap<[u8; 32], Ballot>) -> Result<(), BeleniosError> {
+        let my_ballot = self.ballot.unwrap();
         match bb.get(&get_id(&self.vk)) {
             None => {
                 Err(BeleniosError::MissingVote)
             }
-            Some(vote) => {
-                if vote == &my_vote {
+            Some(ballot) => {
+                if ballot == &my_ballot {
                     Ok(())
                 } else {
                     Err(BeleniosError::InvalidVote)

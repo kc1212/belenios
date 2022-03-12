@@ -71,14 +71,14 @@ mod test {
         assert_eq!(pk, master_sk * G);
 
         // initialize the voters and store the verification keys in server
-        let (sks, vks)  = registrar::create_voters(&mut rng, voter_count);
+        let (sks, vks)  = registrar::create_sks_vks(&mut rng, voter_count);
         let mut voters: Vec<Voter> = sks.into_iter().map(|sk| Voter::new(sk, &pk)).collect();
         server.store_vks(vks);
 
         // voting phase
         for (voter, vote) in (&mut voters).iter_mut().zip(votes) {
             let v = voter.vote(&mut rng, vote);
-            server.add_vote(v).unwrap();
+            server.add_ballot(v).unwrap();
             assert_eq!(binary_cipher::decrypt(&master_sk, &v.0.ct, upper_bound).unwrap(), vote as u32);
         }
 
@@ -98,6 +98,6 @@ mod test {
         }
 
         // polling station computes the final outcome
-        server.compute_election_result().unwrap()
+        server.compute_final_tally().unwrap()
     }
 }
