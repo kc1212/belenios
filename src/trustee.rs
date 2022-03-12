@@ -37,9 +37,12 @@ impl Trustee {
     }
 
     /// Output a share for the trustee with `receiver_id`.
-    pub fn distribute_share(&self, receiver_id: usize) -> Scalar {
-        // TODO(kc1212): check index
-        self.shares[receiver_id]
+    pub fn distribute_share(&self, receiver_id: usize) -> Result<Scalar, BeleniosError> {
+        if receiver_id >= self.m {
+            Err(BeleniosError::InvalidTrusteeID)
+        } else {
+            Ok(self.shares[receiver_id])
+        }
     }
 
     /// Store a share for the trustee with `sender_id`.
@@ -82,6 +85,9 @@ impl Trustee {
     }
 
     fn check_commitment(&self, commitments: &Vec<Option<Vec<EdwardsPoint>>>) -> Result<(), BeleniosError> {
+        if commitments.len() != self.m {
+            return Err(BeleniosError::MissingTrusteeCommitments);
+        }
         for (i, o) in self.their_shares.iter().enumerate() {
             let s = o.ok_or(BeleniosError::MissingTrusteeShare)?;
             let c = commitments[i].as_ref().ok_or(BeleniosError::MissingTrusteeCommitments)?[self.id];
@@ -90,5 +96,45 @@ impl Trustee {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use rand_chacha::ChaChaRng;
+    use rand_core::SeedableRng;
+
+    #[test]
+    fn test_trustee() {
+        let mut rng = ChaChaRng::from_entropy();
+        let mut trustee_0 = Trustee::new(&mut rng, 0, 2);
+        let mut trustee_1 = Trustee::new(&mut rng, 1, 2);
+
+        assert_eq!(trustee_0.distribute_share(2).unwrap_err(), BeleniosError::InvalidTrusteeID);
+        assert_eq!(trustee_1.store_share(2, trustee_0.distribute_share(1).unwrap()).unwrap_err(),
+            BeleniosError::InvalidTrusteeID);
+
+        trustee_0.store_share(0, trustee_0.distribute_share(0).unwrap()).unwrap();
+        trustee_0.store_share(1, trustee_1.distribute_share(0).unwrap()).unwrap();
+        trustee_1.store_share(0, trustee_0.distribute_share(1).unwrap()).unwrap();
+        trustee_1.store_share(1, trustee_1.distribute_share(1).unwrap()).unwrap();
+
+        assert_eq!(trustee_0.publish_pk_pok(&mut rng, &vec![]).unwrap_err(), BeleniosError::MissingTrusteeCommitments);
+        assert_eq!(trustee_0.publish_pk_pok(&mut rng, &vec![None; 2]).unwrap_err(), BeleniosError::MissingTrusteeCommitments);
+
+        let bad_commitment = vec![
+            Some(trustee_1.commit_share()),
+            Some(trustee_0.commit_share()),
+        ];
+        assert_eq!(trustee_0.publish_pk_pok(&mut rng, &bad_commitment).unwrap_err(), BeleniosError::BadTrusteeCommitments);
+        assert_eq!(trustee_1.publish_pk_pok(&mut rng, &bad_commitment).unwrap_err(), BeleniosError::BadTrusteeCommitments);
+
+        let good_commitment = vec![
+            Some(trustee_0.commit_share()),
+            Some(trustee_1.commit_share()),
+        ];
+        trustee_0.publish_pk_pok(&mut rng, &good_commitment).unwrap();
+        trustee_1.publish_pk_pok(&mut rng, &good_commitment).unwrap();
     }
 }

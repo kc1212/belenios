@@ -2,8 +2,9 @@
 
 ## Build and test
 ```
-cargo build
 cargo test
+cargo build
+cargo run --example belenios_sim -- -h # for CLI options
 ```
 Use the `--release` flag for better performance.
 

@@ -18,12 +18,11 @@ mod test {
     use crate::trustee::Trustee;
 
     #[quickcheck]
-    fn quickcheck_good_execution(votes: Vec<bool>, trustee_count: usize) -> TestResult {
-        if votes.len() < 2 || votes.len() > 50 {
-        }
-        if trustee_count <  2 || trustee_count > 10 {
+    fn quickcheck_good_execution(votes: Vec<bool>) -> TestResult {
+        if votes.len() < 2 || votes.len() > 20 {
             return TestResult::discard();
         }
+        let trustee_count = 2;
         let expected: u32 = votes.iter().map(|x| *x as u32).sum();
         TestResult::from_bool(good_execution(votes, trustee_count) == expected)
     }
@@ -53,7 +52,7 @@ mod test {
         let mut master_sk = Scalar::zero();
         for i in 0..trustee_count {
             for j in 0..trustee_count {
-                let share = trustees[j].distribute_share(i);
+                let share = trustees[j].distribute_share(i).unwrap();
                 trustees[i].store_share(j, share).unwrap();
                 master_sk += share;
             }

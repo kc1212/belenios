@@ -64,3 +64,30 @@ impl Voter {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use rand_chacha::ChaChaRng;
+    use rand_core::SeedableRng;
+
+    #[test]
+    fn test_voter() {
+        let mut rng = ChaChaRng::from_entropy();
+        let (_, pk) = binary_cipher::keygen(&mut rng);
+        let sk = Scalar::random(&mut rng);
+        let mut voter = Voter::new(sk, &pk);
+
+        let ballot_vk = voter.vote(&mut rng, true);
+        let mut bb: HashMap<[u8; 32], Ballot> = HashMap::new();
+        assert_eq!(voter.check_bb(&bb).unwrap_err(), BeleniosError::MissingVote);
+
+        let mut bad_voter = Voter::new(sk, &pk);
+        let bad_ballot_vk = bad_voter.vote(&mut rng, true);
+        bb.insert(get_id(&ballot_vk.1), bad_ballot_vk.0);
+        assert_eq!(voter.check_bb(&bb).unwrap_err(), BeleniosError::InvalidVote);
+
+        bb.insert(get_id(&ballot_vk.1), ballot_vk.0);
+        assert_eq!(voter.check_bb(&bb).unwrap(), ());
+    }
+}
