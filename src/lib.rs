@@ -3,13 +3,13 @@ pub mod trustee;
 pub mod polling_station;
 pub mod error;
 pub mod voter;
+pub mod registrar;
 
 #[cfg(test)]
 mod test {
     use super::*;
     use quickcheck_macros::quickcheck;
     use quickcheck::TestResult;
-    use curve25519_dalek::edwards::EdwardsPoint;
     use curve25519_dalek::scalar::Scalar;
     use rand_chacha::ChaChaRng;
     use rand_core::SeedableRng;
@@ -71,8 +71,8 @@ mod test {
         assert_eq!(pk, master_sk * G);
 
         // initialize the voters and store the verification keys in server
-        let mut voters: Vec<Voter> = (0..voter_count).map(|_| Voter::new(&mut rng, &pk)).collect();
-        let vks: Vec<EdwardsPoint> = voters.iter().map(|v| v.get_vk()).collect();
+        let (sks, vks)  = registrar::create_voters(&mut rng, voter_count);
+        let mut voters: Vec<Voter> = sks.into_iter().map(|sk| Voter::new(sk, &pk)).collect();
         server.store_vks(vks);
 
         // voting phase

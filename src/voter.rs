@@ -26,8 +26,8 @@ pub struct Voter {
 }
 
 impl Voter {
-    pub fn new<R: RngCore + CryptoRng>(rng: &mut R, pk: &EdwardsPoint) -> Voter {
-        let (sk, vk) = schnorr::keygen(rng);
+    pub fn new(sk: Scalar, pk: &EdwardsPoint) -> Voter {
+        let vk = sk * G;
         Voter {
             sk, vk, pk: *pk, vote: None
         }
