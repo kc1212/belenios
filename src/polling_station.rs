@@ -9,7 +9,7 @@ use crate::crypto::*;
 // Also known as the voting server
 pub struct PollingStation {
     m: usize,
-    max_sum: u32,
+    pt_upper_bound: u32,
     pk: Option<EdwardsPoint>,
     vks: Vec<EdwardsPoint>,
     trustee_pk_pok: Vec<Option<(EdwardsPoint, zkp_dl::Proof)>>,
@@ -19,10 +19,10 @@ pub struct PollingStation {
 }
 
 impl PollingStation {
-    pub fn new(m: usize, max_sum: u32) -> PollingStation {
+    pub fn new(m: usize, pt_upper_bound: u32) -> PollingStation {
         PollingStation {
             m,
-            max_sum,
+            pt_upper_bound,
             pk: None,
             vks: vec![],
             trustee_pk_pok: vec![None; m],
@@ -108,7 +108,7 @@ impl PollingStation {
             let (tmp, _) = o.unwrap();
             a += tmp;
         }
-        binary_cipher::get_ptxt(&(b-a), self.max_sum).ok_or(BeleniosError::CannotDecrypt)
+        brute_force_dlog(&(b-a), self.ptxt_upper_bound).ok_or(BeleniosError::CannotDecrypt)
     }
 
     pub fn get_trustee_pk_poks(&self) -> Vec<Option<(EdwardsPoint, (EdwardsPoint, Scalar))>> {

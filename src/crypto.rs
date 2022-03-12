@@ -1,5 +1,4 @@
 use std::ops::Add;
-
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::scalar::Scalar;
@@ -21,9 +20,9 @@ fn generic_keygen<R: CryptoRng + RngCore>(rng: &mut R) -> (Scalar, EdwardsPoint)
 
 // TODO(kc1212): impl Sum for tuple
 pub(crate) fn sum_tuple<I, T>(xs: I) -> (T, T)
-where
-    I: Iterator<Item = (T, T)>,
-    T: Identity + Copy + Add<Output = T>
+    where
+        I: Iterator<Item=(T, T)>,
+        T: Identity + Copy + Add<Output=T>
 {
     let mut out = (T::identity(), T::identity());
     for x in xs {
@@ -36,63 +35,85 @@ pub(crate) fn get_id(h: &EdwardsPoint) -> [u8; 32] {
     h.compress().to_bytes()
 }
 
-pub fn share<R: CryptoRng + RngCore>(rng: &mut R, t: usize) -> (Scalar, Vec<Scalar>) {
-    let x = Scalar::random(rng);
-    let mut shares: Vec<Scalar> = (0..t-1).map(|_| Scalar::random(rng)).collect();
-    let tmp_sum: Scalar = shares.iter().sum();
-    shares.push(tmp_sum - x);
-    (x, shares)
+pub(crate) fn brute_force_dlog(gv: &EdwardsPoint, upper_bound: u32) -> Option<u32> {
+    let mut tmp = Scalar::zero();
+    for i in 0..upper_bound {
+        if tmp * G == *gv {
+            return Some(i);
+        }
+        tmp += Scalar::one();
+    }
+    None
 }
 
+/// An additively homomorphic ElGamal cipher that encrypts binary messages.
 pub mod binary_cipher {
     use super::*;
 
+    /// Generate a private and a public key.
+    ///
+    /// # Arguments
+    /// * `rng` - A cryptographic PRNG.
     pub fn keygen<R: CryptoRng + RngCore>(rng: &mut R) -> (Scalar, EdwardsPoint) {
         generic_keygen(rng)
     }
 
+    /// Encrypt a binary message using a given randomness `r`.
+    ///
+    /// # Arguments
+    /// * `pk` - A public key.
+    /// * `msg` - A binary message.
+    /// * `r` - Randomness used in encryption.
     pub fn encrypt_with_r(pk: &EdwardsPoint, msg: bool, r: &Scalar) -> (EdwardsPoint, EdwardsPoint) {
         let b = msg as u32;
         (r * G, r * pk + Scalar::from(b) * G)
     }
 
+    /// Encrypt a binary message.
+    ///
+    /// # Arguments
+    /// * `rng` - A cryptographic PRNG.
+    /// * `pk` - A public key.
+    /// * `msg` - A binary message.
     pub fn encrypt<R: CryptoRng + RngCore>(rng: &mut R, pk: &EdwardsPoint, msg: bool) -> (EdwardsPoint, EdwardsPoint) {
         let r = Scalar::random(rng);
         encrypt_with_r(pk, msg, &r)
     }
 
-    pub fn partial_decrypt(sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint)) -> EdwardsPoint {
+    /// Decrypt a ciphertext.
+    /// The returned plaintext does not have to be binary due to the homomorphic property of ElGamal.
+    ///
+    /// # Arguments
+    /// * `sk` - The secret key.
+    /// * `ct` - The ElGamal ciphertext.
+    /// * `upper_bound` - The upperbound on the plaintext.
+    pub fn decrypt(sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint), upper_bound: u32) -> Option<u32> {
         let (a, b) = ct;
         let gv = b - (sk * a);
-        gv
-    }
-
-    pub fn get_ptxt(gv: &EdwardsPoint, max_sum: u32) -> Option<u32> {
-        let mut tmp = Scalar::zero();
-        for i in 0..max_sum {
-            if tmp * G == *gv {
-                return Some(i)
-            }
-            tmp += Scalar::one();
-        }
-        None
-    }
-
-    pub fn decrypt(sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint), max_sum: u32) -> Option<u32> {
-        let gv = partial_decrypt(sk, ct);
-        get_ptxt(&gv, max_sum)
+        brute_force_dlog(&gv, upper_bound)
     }
 }
 
+/// Module for signing and verifying a Schnorr signature.
 pub mod schnorr {
     use super::*;
 
     pub type Signature = (Scalar, Scalar);
 
+    /// Generate a signing key and a verification key.
+    ///
+    /// # Arguments
+    /// * `rng` - A cryptographic PRNG.
     pub fn keygen<R: CryptoRng + RngCore>(rng: &mut R) -> (Scalar, EdwardsPoint) {
         generic_keygen(rng)
     }
 
+    /// Sign a message and output a signature.
+    ///
+    /// # Arguments
+    /// * `rng` - A cryptographic PRNG.
+    /// * `sk` - The secret key.
+    /// * `msg` - The message as a byte slice.
     pub fn sign<R: CryptoRng + RngCore>(rng: &mut R, sk: &Scalar, msg: &[u8]) -> Signature {
         let w = Scalar::random(rng);
         let gw = w * G;
@@ -105,6 +126,12 @@ pub mod schnorr {
         (r, c)
     }
 
+    /// Sign two points and output a signature.
+    ///
+    /// # Arguments
+    /// * `rng` - A cryptographic PRNG.
+    /// * `sk` - The secret key.
+    /// * `ct` - Two curve points.
     pub fn sign_ct<R: CryptoRng + RngCore>(rng: &mut R, sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint)) -> Signature {
         let mut buf = vec![];
         buf.extend_from_slice(ct.0.compress().as_bytes());
@@ -112,6 +139,12 @@ pub mod schnorr {
         sign(rng, sk, &buf)
     }
 
+    /// Verify a signature of a byte slice.
+    ///
+    /// # Arguments
+    /// * `vk` - The verification key.
+    /// * `msg` - The byte slice that was signed.
+    /// * `sig` - The signature.
     pub fn verify(vk: &EdwardsPoint, msg: &[u8], signature: &Signature) -> bool {
         let (r, c) = signature;
         let a = r * G + c * vk;
@@ -122,6 +155,12 @@ pub mod schnorr {
         c == &Scalar::hash_from_bytes::<Sha3_512>(&buf)
     }
 
+    /// Verify a signature of two points.
+    ///
+    /// # Arguments
+    /// * `vk` - The verification key.
+    /// * `ct` - The two elliptic curve points that was signed.
+    /// * `sig` - The signature.
     pub fn verify_ct(vk: &EdwardsPoint, ct: &(EdwardsPoint, EdwardsPoint), signature: &Signature) -> bool {
         let mut buf = vec![];
         buf.extend_from_slice(ct.0.compress().as_bytes());
@@ -130,9 +169,12 @@ pub mod schnorr {
     }
 }
 
-// Section 2.1 https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf plus Fiat-Shamir
+/// Zero knowledge proof of knowledge of a discrete log relation.
+/// Implemented according to
+/// Section 2.1 https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf plus Fiat-Shamir.
 pub mod zkp_dl {
     use super::*;
+
     pub type Proof = (EdwardsPoint, Scalar);
 
     fn fiat_shamir(h: &EdwardsPoint, r: &EdwardsPoint) -> Scalar {
@@ -146,6 +188,11 @@ pub mod zkp_dl {
         e
     }
 
+    /// Prove the relation g^x = h where x is the witness
+    ///
+    /// # Arguments
+    /// * `rng` - A cryptographic PRNG.
+    /// * `x` - The witness (discrete log).
     pub fn prove<R: RngCore + CryptoRng>(rng: &mut R, x: &Scalar) -> Proof {
         let k = Scalar::random(rng);
         let r = k * G;
@@ -155,6 +202,11 @@ pub mod zkp_dl {
         (r, s)
     }
 
+    /// Verify a discrete log proof.
+    ///
+    /// # Arguments
+    /// * `h` - The public key.
+    /// * `proof` - The discrete log proof for `h`.
     pub fn verify(h: &EdwardsPoint, proof: &Proof) -> bool {
         let (r, s) = proof;
         let e = fiat_shamir(&h, &r);
@@ -162,7 +214,9 @@ pub mod zkp_dl {
     }
 }
 
-// Section 3.1 of https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf plus Fiat-Shamir
+/// Zero knowledge proof of a binary plaintext in an ElGamal ciphertext.
+/// Implemented according to
+// Section 3.1 of https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf plus Fiat-Shamir.
 pub mod zkp_binary_ptxt {
     use super::*;
 
@@ -185,11 +239,18 @@ pub mod zkp_binary_ptxt {
         e
     }
 
-    pub fn prove<R: CryptoRng + RngCore>(rng: &mut R, pk: &EdwardsPoint, pt: bool)
-                                     -> ((EdwardsPoint, EdwardsPoint), Proof) {
+    /// Create a proof for the plaintext `pt` encrypted under the public key `h`.
+    /// The ciphertext along with the proof is returned because the prover
+    /// needs to know the randomness used in the ciphertext.
+    ///
+    /// # Arguments
+    /// * `rng` - A cryptographic PRNG.
+    /// * `h` - A public key.
+    /// * `pt` - The binary plaintext.
+    pub fn prove<R: CryptoRng + RngCore>(rng: &mut R, h: &EdwardsPoint, pt: bool)
+                                         -> ((EdwardsPoint, EdwardsPoint), Proof) {
         let r = Scalar::random(rng);
-        let h = pk;
-        let ct = binary_cipher::encrypt_with_r(pk, pt, &r);
+        let ct = binary_cipher::encrypt_with_r(h, pt, &r);
         let (alpha, beta) = ct;
         let mj = Scalar::from(!pt as u32);
         let sigmaj = Scalar::random(rng);
@@ -217,6 +278,12 @@ pub mod zkp_binary_ptxt {
         (ct, (commitment, response))
     }
 
+    /// Verify a binary plaintext proof.
+    ///
+    /// # Arguments
+    /// * `h` - The public key.
+    /// * `ct` - The ciphertext that is used for the proof.
+    /// * `proof` - The binary plaintext proof.
     pub fn verify(h: &EdwardsPoint, ct: &(EdwardsPoint, EdwardsPoint), proof: &Proof) -> bool {
         let commitment = proof.0;
         let response = proof.1;
@@ -242,7 +309,10 @@ pub mod zkp_binary_ptxt {
     }
 }
 
-// Section 2.2 of https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf plus Fiat-Shamir
+/// Zero knowledge proof of the relation c^x = m where x is the witness.
+/// The public values are c, m and h=g^x.
+/// Implemented according to
+/// Section 2.2 of https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf plus Fiat-Shamir.
 pub mod zkp_decryption {
     use super::*;
 
@@ -272,10 +342,17 @@ pub mod zkp_decryption {
         ((a, b), s)
     }
 
+    /// Verify a proof of the relation c^x = m.
+    ///
+    /// # Arguments
+    /// * `h` - This is typically the public key, e.g., g^x.
+    /// * `c` - A point such that c^x = m.
+    /// * `m` - A point such that c^x = m.
+    /// * `proof` - The proof.
     pub fn verify(h: &EdwardsPoint, c: &EdwardsPoint, m: &EdwardsPoint, proof: &Proof) -> bool {
         let ((a, b), s) = proof;
         let e = fiat_shamir(&a, &b);
-        (*a == s*G - e*h) && (*b == s*c - e*m)
+        (*a == s * G - e * h) && (*b == s * c - e * m)
     }
 }
 
@@ -392,9 +469,9 @@ mod test {
     fn test_zkp_decryption() {
         let mut rng = ChaChaRng::from_entropy();
         let x = Scalar::random(&mut rng);
-        let h = x*G;
+        let h = x * G;
         let c = Scalar::random(&mut rng) * G;
-        let m = x*c;
+        let m = x * c;
         let proof = zkp_decryption::prove(&mut rng, &x, &c);
         assert!(zkp_decryption::verify(&h, &c, &m, &proof))
     }
@@ -403,9 +480,9 @@ mod test {
     fn test_zkp_decryption_bad_proof() {
         let mut rng = ChaChaRng::from_entropy();
         let x = Scalar::random(&mut rng);
-        let h = x*G;
+        let h = x * G;
         let c = Scalar::random(&mut rng) * G;
-        let m = x*c;
+        let m = x * c;
         let proof = zkp_decryption::prove(&mut rng, &x, &c);
         assert!(zkp_decryption::verify(&h, &c, &m, &proof))
     }
@@ -414,9 +491,9 @@ mod test {
     fn test_zkp_decryption_bad_stmt() {
         let mut rng = ChaChaRng::from_entropy();
         let x = Scalar::random(&mut rng);
-        let h = x*G;
+        let h = x * G;
         let c = Scalar::random(&mut rng) * G;
-        let m = x*c;
+        let m = x * c;
         let proof = zkp_decryption::prove(&mut rng, &x, &c);
         assert!(zkp_decryption::verify(&h, &c, &m, &proof))
     }
