@@ -23,6 +23,14 @@ pub(crate) fn add_tuple<T: Copy + Add<Output = T>>(a: &(T, T), b: &(T, T)) -> (T
     (a.0 + b.0, a.1 + b.1)
 }
 
+pub fn share<R: CryptoRng + RngCore>(rng: &mut R, t: usize) -> (Scalar, Vec<Scalar>) {
+    let x = Scalar::random(rng);
+    let mut shares: Vec<Scalar> = (0..t-1).map(|_| Scalar::random(rng)).collect();
+    let tmp_sum: Scalar = shares.iter().sum();
+    shares.push(tmp_sum - x);
+    (x, shares)
+}
+
 pub mod binary_cipher {
     use super::*;
 

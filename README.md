@@ -8,12 +8,13 @@ cargo test
 Use the `--release` flag for better performance.
 
 ## Limitations
-- This is a toy implementation (not constant time, not side-channel resistant)
-- Only binary votes are supported
-- All trustees need to be online, i.e., m = t + 1
+- Only binary votes are supported.
+- All trustees need to be online to decrypt the ballot, i.e., m = t + 1.
+As a result, there is no need to use Shamir secret sharing for trustee's initial secret,
+we just use additive secret sharing.
+- This is a toy implementation (not constant time, not side-channel resistant).
 
 ## Resources
-- paper: https://hal.inria.fr/hal-02066930/document
-- ZK: https://hal.inria.fr/hal-01576379/document
-- DKG: https://members.loria.fr/VCortier/files/Papers/WPES2013.pdf
+- Reference: https://hal.inria.fr/hal-02066930/document
+- ZKP details: https://hal.inria.fr/hal-01576379/document
 - Related presentation: https://www.youtube.com/watch?v=Fzj29WTVWb8

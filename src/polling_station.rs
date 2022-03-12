@@ -1,5 +1,6 @@
 use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::traits::Identity;
 use crate::error::BeleniosError;
 use crate::crypto::zkp_dl;
 
@@ -7,59 +8,54 @@ struct BulletinBoard {}
 
 // Also known as the voting server
 pub struct PollingStation {
-    pub m: usize,
-    pub trustee_commitments: Vec<Vec<EdwardsPoint>>,
-    pub pk: Option<EdwardsPoint>,
-    pub vks: Vec<EdwardsPoint>,
+    m: usize,
+    pk: Option<EdwardsPoint>,
+    vks: Vec<EdwardsPoint>,
+    trustee_pk_pok: Vec<Option<(EdwardsPoint, (EdwardsPoint, Scalar))>>,
 }
 
 impl PollingStation {
-    fn get_t(&self) -> usize {
-        self.m - 1
-    }
-
     pub fn new(m: usize) -> PollingStation {
         PollingStation {
             m,
-            trustee_commitments: vec![vec![]; m],
             pk: None,
             vks: vec![],
+            trustee_pk_pok: vec![None; m],
         }
     }
 
-    pub fn store_trustee_commitment(&mut self, trustee_id: usize, commitment: Vec<EdwardsPoint>) -> Result<(), BeleniosError> {
-        if commitment.len() != self.get_t() + 1 {
-            return Err(BeleniosError::NotEnoughTrusteeCommitments);
+    pub fn store_trustee_pk(&mut self, trustee_id: usize, pk_pok: &(EdwardsPoint, (EdwardsPoint, Scalar)))
+    -> Result<(), BeleniosError> {
+        let (pk, pok) = pk_pok;
+        if !zkp_dl::verify(pk, pok) {
+            return Err(BeleniosError::BadDiscreteLogProof)
         }
-        self.trustee_commitments[trustee_id] = commitment;
+        if trustee_id >= self.m {
+            return Err(BeleniosError::InvalidTrusteeID);
+        }
+        self.trustee_pk_pok[trustee_id] = Some(*pk_pok);
         Ok(())
     }
 
-    pub fn store_trustee_pk(&mut self, trustee_id: usize, pk: &EdwardsPoint, pok: &(EdwardsPoint, Scalar))
-    -> Result<(), BeleniosError> {
-        self.check_trustee_pk(pk, pok)?;
-        // TODO store trustee pks
-        unimplemented!()
-    }
-
     pub fn compute_final_pk(&mut self) -> Result<EdwardsPoint, BeleniosError> {
-        let mut pk = self.trustee_commitments[0][0];
-        for i in 1..self.m {
-            pk += self.trustee_commitments[i][0];
+        let mut final_pk = EdwardsPoint::identity();
+        for o in &self.trustee_pk_pok {
+            let (pk, _) = o.ok_or(BeleniosError::MissingTrusteePublicKey)?;
+            final_pk += pk;
         }
-        self.pk = Some(pk);
-        // TODO do the final check on trustee pks
-        unimplemented!()
+        self.pk = Some(final_pk);
+        Ok(final_pk)
     }
 
     pub fn store_vks(&mut self, vks: Vec<EdwardsPoint>) {
         self.vks = vks
     }
 
-    fn check_trustee_pk(&self, pk: &EdwardsPoint, pok: &(EdwardsPoint, Scalar)) -> Result<(), BeleniosError> {
-        if !zkp_dl::verify(pk, pok) {
-            return Err(BeleniosError::BadDiscreteLogProof);
-        }
-        Ok(())
+    pub fn get_trustee_pk_poks(&self) -> Vec<Option<(EdwardsPoint, (EdwardsPoint, Scalar))>> {
+        self.trustee_pk_pok.clone()
+    }
+
+    pub fn get_pk(&self) -> Option<EdwardsPoint> {
+        self.pk
     }
 }
