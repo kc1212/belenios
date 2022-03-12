@@ -246,8 +246,6 @@ pub mod zkp_binary_ptxt {
 
 // Section 2.2 of https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf
 pub mod zkp_decryption {
-    use crate::crypto::binary_cipher::partial_decrypt;
-
     use super::*;
 
     pub type Proof = ((EdwardsPoint, EdwardsPoint), Scalar);
@@ -262,17 +260,13 @@ pub mod zkp_decryption {
         e
     }
 
-    /// Given a private key `x` and a ciphertext `ct`,
-    /// output a plaintext and a proof of correct decryption.
+    /// Create a proof of the relation c^x = m.
     ///
     /// # Arguments
     /// * `rng` - A cryptographic PRNG.
     /// * `x` - The private key.
-    /// * `ct` - The ElGamal ciphertext.
-    pub fn prove<R: RngCore + CryptoRng>(rng: &mut R, x: &Scalar, ct: &(EdwardsPoint, EdwardsPoint)) -> Proof {
-        let c = ct.0;
-        let m = ct.1 - partial_decrypt(x, ct);
-        assert_eq!(x * c, m);
+    /// * `c` - A point such that c^x = m.
+    pub fn prove<R: RngCore + CryptoRng>(rng: &mut R, x: &Scalar, c: &EdwardsPoint) -> Proof {
         let k = Scalar::random(rng);
         let (a, b) = (k * G, k * c);
         let e = fiat_shamir(&a, &b);
@@ -280,10 +274,8 @@ pub mod zkp_decryption {
         ((a, b), s)
     }
 
-    pub fn verify(h: &EdwardsPoint, ct: &(EdwardsPoint, EdwardsPoint), ptxt: &EdwardsPoint, proof: &Proof) -> bool {
+    pub fn verify(h: &EdwardsPoint, c: &EdwardsPoint, m: &EdwardsPoint, proof: &Proof) -> bool {
         let ((a, b), s) = proof;
-        let c = ct.0;
-        let m = ct.1 - ptxt;
         let e = fiat_shamir(&a, &b);
         (*a == s*G - e*h) && (*b == s*c - e*m)
     }
@@ -401,25 +393,36 @@ mod test {
         // TODO(kc1212): test failures
     }
 
-    #[quickcheck]
-    fn quickcheck_zkp_decryption(msg: bool) -> bool {
+    #[test]
+    fn test_zkp_decryption() {
         let mut rng = ChaChaRng::from_entropy();
-        let (sk, pk) = binary_cipher::keygen(&mut rng);
-        let ct = binary_cipher::encrypt(&mut rng, &pk, msg);
-        let proof = zkp_decryption::prove(&mut rng, &sk, &ct);
-
-        let partial_ptxt = binary_cipher::partial_decrypt(&sk, &ct);
-        zkp_decryption::verify(&pk, &ct, &partial_ptxt, &proof)
+        let x = Scalar::random(&mut rng);
+        let h = x*G;
+        let c = Scalar::random(&mut rng) * G;
+        let m = x*c;
+        let proof = zkp_decryption::prove(&mut rng, &x, &c);
+        assert!(zkp_decryption::verify(&h, &c, &m, &proof))
     }
 
-    #[quickcheck]
-    fn quickcheck_zkp_decryption_bad_pt(msg: bool) -> bool {
+    #[test]
+    fn test_zkp_decryption_bad_proof() {
         let mut rng = ChaChaRng::from_entropy();
-        let (sk, pk) = binary_cipher::keygen(&mut rng);
-        let ct = binary_cipher::encrypt(&mut rng, &pk, msg);
-        let proof = zkp_decryption::prove(&mut rng, &sk, &ct);
+        let x = Scalar::random(&mut rng);
+        let h = x*G;
+        let c = Scalar::random(&mut rng) * G;
+        let m = x*c;
+        let proof = zkp_decryption::prove(&mut rng, &x, &c);
+        assert!(zkp_decryption::verify(&h, &c, &m, &proof))
+    }
 
-        let bad_pt = Scalar::random(&mut rng) * G;
-        !zkp_decryption::verify(&pk, &ct, &bad_pt, &proof)
+    #[test]
+    fn test_zkp_decryption_bad_stmt() {
+        let mut rng = ChaChaRng::from_entropy();
+        let x = Scalar::random(&mut rng);
+        let h = x*G;
+        let c = Scalar::random(&mut rng) * G;
+        let m = x*c;
+        let proof = zkp_decryption::prove(&mut rng, &x, &c);
+        assert!(zkp_decryption::verify(&h, &c, &m, &proof))
     }
 }

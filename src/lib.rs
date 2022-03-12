@@ -69,7 +69,7 @@ mod test {
         }
 
         // compute the encrypted tally
-        let ct_tally = server.tally_votes().unwrap();
+        let ct_tally = server.tally().unwrap();
 
         // trustees perform distributed decryption
         for (i, trustee) in trustees.iter().enumerate() {

@@ -47,9 +47,9 @@ impl PollingStation {
     pub fn store_trustee_res_pok(&mut self, trustee_id: usize, res_pok: (EdwardsPoint, zkp_decryption::Proof))
                                 -> Result<(), BeleniosError> {
         let ct = self.tally.unwrap();
-        let pk = self.trustee_pk_pok[trustee_id].unwrap().0;
-        let (res, pok) = res_pok;
-        if !zkp_decryption::verify(&pk, &ct, &res, &pok) {
+        let pk_i = self.trustee_pk_pok[trustee_id].unwrap().0;
+        let (m, pok) = res_pok;
+        if !zkp_decryption::verify(&pk_i, &ct.0, &m, &pok) {
             return Err(BeleniosError::BadDecryptionProof)
         }
         if trustee_id >= self.m {
@@ -86,7 +86,7 @@ impl PollingStation {
         Ok(())
     }
 
-    pub fn tally_votes(&mut self) -> Result<(EdwardsPoint, EdwardsPoint), BeleniosError> {
+    pub fn tally(&mut self) -> Result<(EdwardsPoint, EdwardsPoint), BeleniosError> {
         let tally = sum_tuple(self.bb.values().map(|vote| { vote.ct }));
         match self.tally {
             None => {
@@ -100,12 +100,13 @@ impl PollingStation {
     }
 
     pub fn compute_election_result(&self) -> Result<u32, BeleniosError> {
-        let mut ptxt_sum = EdwardsPoint::identity();
+        let b = self.tally.unwrap().1;
+        let mut a = EdwardsPoint::identity();
         for o in &self.trustee_res_pok {
-            let (ptxt, _) = o.unwrap();
-            ptxt_sum += ptxt;
+            let (tmp, _) = o.unwrap();
+            a += tmp;
         }
-        binary_cipher::get_ptxt(&ptxt_sum).ok_or(BeleniosError::CannotDecrypt)
+        binary_cipher::get_ptxt(&(b-a)).ok_or(BeleniosError::CannotDecrypt)
     }
 
     pub fn get_trustee_pk_poks(&self) -> Vec<Option<(EdwardsPoint, (EdwardsPoint, Scalar))>> {

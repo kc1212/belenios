@@ -44,8 +44,8 @@ impl Trustee {
     }
 
     pub fn partial_decrypt_pok<R: CryptoRng + RngCore>(&self, rng: &mut R, ct: &(EdwardsPoint, EdwardsPoint)) -> (EdwardsPoint, zkp_decryption::Proof) {
-        let ptxt = binary_cipher::partial_decrypt(&self.sk_i, &ct);
-        let pok = zkp_decryption::prove(rng, &self.sk_i, &ct);
-        (ptxt, pok)
+        let m = self.sk_i * ct.0;
+        let pok = zkp_decryption::prove(rng, &self.sk_i, &ct.0);
+        (m, pok)
     }
 }

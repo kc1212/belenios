@@ -17,4 +17,3 @@ we just use additive secret sharing.
 ## Resources
 - Reference: https://hal.inria.fr/hal-02066930/document
 - ZKP details: https://hal.inria.fr/hal-01576379/document
-- Related presentation: https://www.youtube.com/watch?v=Fzj29WTVWb8
