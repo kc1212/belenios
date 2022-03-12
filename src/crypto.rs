@@ -35,15 +35,23 @@ pub(crate) fn get_id(h: &EdwardsPoint) -> [u8; 32] {
     h.compress().to_bytes()
 }
 
-pub(crate) fn brute_force_dlog(gv: &EdwardsPoint, upper_bound: u32) -> Option<u32> {
+pub(crate) fn brute_force_dlog(gv: &EdwardsPoint, upper_bound: usize) -> Option<u32> {
     let mut tmp = Scalar::zero();
     for i in 0..upper_bound {
         if tmp * G == *gv {
-            return Some(i);
+            return Some(i as u32);
         }
         tmp += Scalar::one();
     }
     None
+}
+
+pub(crate) fn share<R: CryptoRng + RngCore>(rng: &mut R, t: usize) -> (Scalar, Vec<Scalar>) {
+    let x = Scalar::random(rng);
+    let mut shares: Vec<Scalar> = (0..t - 1).map(|_| Scalar::random(rng)).collect();
+    let tmp_sum: Scalar = shares.iter().sum();
+    shares.push(tmp_sum - x);
+    (x, shares)
 }
 
 /// An additively homomorphic ElGamal cipher that encrypts binary messages.
@@ -87,7 +95,7 @@ pub mod binary_cipher {
     /// * `sk` - The secret key.
     /// * `ct` - The ElGamal ciphertext.
     /// * `upper_bound` - The upperbound on the plaintext.
-    pub fn decrypt(sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint), upper_bound: u32) -> Option<u32> {
+    pub fn decrypt(sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint), upper_bound: usize) -> Option<u32> {
         let (a, b) = ct;
         let gv = b - (sk * a);
         brute_force_dlog(&gv, upper_bound)
@@ -367,7 +375,7 @@ mod test {
     use super::*;
 
     const ORDER: Scalar = constants::BASEPOINT_ORDER;
-    const MAX_SUM: u32 = 50;
+    const MAX_PT: usize = 50;
 
     #[test]
     fn test_curve_identity() {
@@ -380,14 +388,17 @@ mod test {
         let mut rng = ChaChaRng::from_entropy();
         let (sk, pk) = binary_cipher::keygen(&mut rng);
         let ct = binary_cipher::encrypt(&mut rng, &pk, msg);
-        let pt = binary_cipher::decrypt(&sk, &ct, MAX_SUM).unwrap();
+        let pt = binary_cipher::decrypt(&sk, &ct, MAX_PT).unwrap();
         msg as u32 == pt
     }
 
     #[quickcheck]
     fn quickcheck_cipher_bad_key(msg: bool) -> bool {
-        // TODO(kc1212): write this test
-        true
+        let mut rng = ChaChaRng::from_entropy();
+        let (_, pk) = binary_cipher::keygen(&mut rng);
+        let (bad_sk, _) = binary_cipher::keygen(&mut rng);
+        let ct = binary_cipher::encrypt(&mut rng, &pk, msg);
+        binary_cipher::decrypt(&bad_sk, &ct, 10) == None
     }
 
     #[quickcheck]
@@ -403,7 +414,7 @@ mod test {
         }).collect();
 
         let sum_ct = sum_tuple(cts.into_iter());
-        let pt = binary_cipher::decrypt(&sk, &sum_ct, MAX_SUM).unwrap();
+        let pt = binary_cipher::decrypt(&sk, &sum_ct, MAX_PT).unwrap();
         let expected = msgs.iter().map(|b| *b as u32).sum();
         TestResult::from_bool(pt == expected)
     }
@@ -462,7 +473,7 @@ mod test {
         assert!(!zkp_binary_ptxt::verify(&pk, &bad_ct, &proof));
         assert!(!zkp_binary_ptxt::verify(&pk, &ct, &bad_proof));
         assert!(zkp_binary_ptxt::verify(&pk, &ct, &proof));
-        assert_eq!(binary_cipher::decrypt(&sk, &ct, MAX_SUM), Some(pt as u32));
+        assert_eq!(binary_cipher::decrypt(&sk, &ct, MAX_PT), Some(pt as u32));
     }
 
     #[test]
