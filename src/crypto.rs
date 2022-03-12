@@ -1,9 +1,11 @@
 use std::ops::Add;
+
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::scalar::Scalar;
-use sha3::Sha3_512;
+use curve25519_dalek::traits::Identity;
 use rand_core::{CryptoRng, RngCore};
+use sha3::Sha3_512;
 
 const MAX_SUM: u32 = 100;
 pub(crate) const G: EdwardsPoint = constants::ED25519_BASEPOINT_POINT;
@@ -11,6 +13,7 @@ const ORDER: Scalar = constants::BASEPOINT_ORDER;
 const PREFIX_SCHNORR: [u8; 8] = *b"SCHNORRx";
 const PREFIX_ZKP_DL: [u8; 8] = *b"ZKP_DLxx";
 const PREFIX_ZKP_MEMBERSHIP: [u8; 8] = *b"ZKP_MEMB";
+const PREFIX_ZKP_DECRYPTION: [u8; 8] = *b"ZKP_DECR";
 
 fn generic_keygen<R: CryptoRng + RngCore>(rng: &mut R) -> (Scalar, EdwardsPoint) {
     let x = Scalar::random(rng);
@@ -18,9 +21,21 @@ fn generic_keygen<R: CryptoRng + RngCore>(rng: &mut R) -> (Scalar, EdwardsPoint)
     (x, y)
 }
 
-// TODO(kc1212): make a new type for ciphertext and impl Add
-pub(crate) fn add_tuple<T: Copy + Add<Output = T>>(a: &(T, T), b: &(T, T)) -> (T, T) {
-    (a.0 + b.0, a.1 + b.1)
+// TODO(kc1212): impl Sum for tuple
+pub(crate) fn sum_tuple<I, T>(xs: I) -> (T, T)
+where
+    I: Iterator<Item = (T, T)>,
+    T: Identity + Copy + Add<Output = T>
+{
+    let mut out = (T::identity(), T::identity());
+    for x in xs {
+        out = (out.0 + x.0, out.1 + x.1);
+    }
+    out
+}
+
+pub(crate) fn get_id(h: &EdwardsPoint) -> [u8; 32] {
+    h.compress().to_bytes()
 }
 
 pub fn share<R: CryptoRng + RngCore>(rng: &mut R, t: usize) -> (Scalar, Vec<Scalar>) {
@@ -48,30 +63,40 @@ pub mod binary_cipher {
         encrypt_with_r(pk, msg, &r)
     }
 
-    pub fn decrypt(sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint)) -> Option<u32> {
+    pub fn partial_decrypt(sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint)) -> EdwardsPoint {
         let (a, b) = ct;
         let gv = b - (sk * a);
-        let mut tmp = Scalar::zero();
+        gv
+    }
 
+    pub fn get_ptxt(gv: &EdwardsPoint) -> Option<u32> {
+        let mut tmp = Scalar::zero();
         // TODO(kc1212): not constant time
         for i in 0..MAX_SUM {
-            if tmp * G == gv {
+            if tmp * G == *gv {
                 return Some(i)
             }
             tmp += Scalar::one();
         }
         None
     }
+
+    pub fn decrypt(sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint)) -> Option<u32> {
+        let gv = partial_decrypt(sk, ct);
+        get_ptxt(&gv)
+    }
 }
 
 pub mod schnorr {
     use super::*;
 
+    pub type Signature = (Scalar, Scalar);
+
     pub fn keygen<R: CryptoRng + RngCore>(rng: &mut R) -> (Scalar, EdwardsPoint) {
         generic_keygen(rng)
     }
 
-    pub fn sign<R: CryptoRng + RngCore>(rng: &mut R, sk: &Scalar, msg: &[u8]) -> (Scalar, Scalar) {
+    pub fn sign<R: CryptoRng + RngCore>(rng: &mut R, sk: &Scalar, msg: &[u8]) -> Signature {
         let w = Scalar::random(rng);
         let gw = w * G;
         let mut buf = vec![]; // TODO(kc1212): consider remove the extra copying
@@ -83,7 +108,14 @@ pub mod schnorr {
         (r, c)
     }
 
-    pub fn verify(vk: &EdwardsPoint, msg: &[u8], signature: &(Scalar, Scalar)) -> bool {
+    pub fn sign_ct<R: CryptoRng + RngCore>(rng: &mut R, sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint)) -> Signature {
+        let mut buf = vec![];
+        buf.extend_from_slice(ct.0.compress().as_bytes());
+        buf.extend_from_slice(ct.1.compress().as_bytes());
+        sign(rng, sk, &buf)
+    }
+
+    pub fn verify(vk: &EdwardsPoint, msg: &[u8], signature: &Signature) -> bool {
         let (r, c) = signature;
         let a = r * G + c * vk;
         let mut buf = vec![]; // TODO(kc1212): consider remove the extra copying
@@ -92,11 +124,19 @@ pub mod schnorr {
         buf.extend_from_slice(a.compress().as_bytes());
         c == &Scalar::hash_from_bytes::<Sha3_512>(&buf)
     }
+
+    pub fn verify_ct(vk: &EdwardsPoint, ct: &(EdwardsPoint, EdwardsPoint), signature: &Signature) -> bool {
+        let mut buf = vec![];
+        buf.extend_from_slice(ct.0.compress().as_bytes());
+        buf.extend_from_slice(ct.1.compress().as_bytes());
+        verify(vk, &buf, signature)
+    }
 }
 
 pub mod zkp_dl {
     // Section 2.1 https://hal.inria.fr/hal-01576379/document plus Fiat-Shamir
     use super::*;
+    pub type Proof = (EdwardsPoint, Scalar);
 
     fn fiat_shamir(h: &EdwardsPoint, r: &EdwardsPoint) -> Scalar {
         // H(domain_separation || G || g^x || g^k)
@@ -109,7 +149,7 @@ pub mod zkp_dl {
         e
     }
 
-    pub fn prove<R: RngCore + CryptoRng>(rng: &mut R, x: &Scalar) -> (EdwardsPoint, Scalar) {
+    pub fn prove<R: RngCore + CryptoRng>(rng: &mut R, x: &Scalar) -> Proof {
         let k = Scalar::random(rng);
         let r = k * G;
         let h = x * G;
@@ -118,7 +158,7 @@ pub mod zkp_dl {
         (r, s)
     }
 
-    pub fn verify(h: &EdwardsPoint, proof: &(EdwardsPoint, Scalar)) -> bool {
+    pub fn verify(h: &EdwardsPoint, proof: &Proof) -> bool {
         let (r, s) = proof;
         let e = fiat_shamir(&h, &r);
         r == &(s * G - e * h)
@@ -127,6 +167,8 @@ pub mod zkp_dl {
 
 pub mod zkp_binary_ptxt {
     use super::*;
+
+    pub type Proof = ([(EdwardsPoint, EdwardsPoint); 2], [(Scalar, Scalar); 2]);
 
     fn fiat_shamir(h: &EdwardsPoint, ct: &(EdwardsPoint, EdwardsPoint), commitment: &[(EdwardsPoint, EdwardsPoint); 2]) -> Scalar {
         // H(domain_separation || G || ct || commitment)
@@ -146,7 +188,7 @@ pub mod zkp_binary_ptxt {
     }
 
     pub fn prove<R: CryptoRng + RngCore>(rng: &mut R, pk: &EdwardsPoint, pt: bool)
-                                     -> ((EdwardsPoint, EdwardsPoint), ([(EdwardsPoint, EdwardsPoint); 2], [(Scalar, Scalar); 2])) {
+                                     -> ((EdwardsPoint, EdwardsPoint), Proof) {
         let r = Scalar::random(rng);
         let h = pk;
         let ct = binary_cipher::encrypt_with_r(pk, pt, &r);
@@ -177,7 +219,7 @@ pub mod zkp_binary_ptxt {
         (ct, (commitment, response))
     }
 
-    pub fn verify(h: &EdwardsPoint, ct: &(EdwardsPoint, EdwardsPoint), proof: &([(EdwardsPoint, EdwardsPoint); 2], [(Scalar, Scalar); 2])) -> bool {
+    pub fn verify(h: &EdwardsPoint, ct: &(EdwardsPoint, EdwardsPoint), proof: &Proof) -> bool {
         let commitment = proof.0;
         let response = proof.1;
         let e = fiat_shamir(h, ct, &commitment);
@@ -202,18 +244,65 @@ pub mod zkp_binary_ptxt {
     }
 }
 
+// Section 2.2 of https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf
+pub mod zkp_decryption {
+    use crate::crypto::binary_cipher::partial_decrypt;
+
+    use super::*;
+
+    pub type Proof = ((EdwardsPoint, EdwardsPoint), Scalar);
+
+    fn fiat_shamir(a: &EdwardsPoint, b: &EdwardsPoint) -> Scalar {
+        let mut buf = vec![];
+        buf.extend_from_slice(&PREFIX_ZKP_DECRYPTION);
+        buf.extend_from_slice(G.compress().as_bytes());
+        buf.extend_from_slice(a.compress().as_bytes());
+        buf.extend_from_slice(b.compress().as_bytes());
+        let e = Scalar::hash_from_bytes::<Sha3_512>(&buf);
+        e
+    }
+
+    /// Given a private key `x` and a ciphertext `ct`,
+    /// output a plaintext and a proof of correct decryption.
+    ///
+    /// # Arguments
+    /// * `rng` - A cryptographic PRNG.
+    /// * `x` - The private key.
+    /// * `ct` - The ElGamal ciphertext.
+    pub fn prove<R: RngCore + CryptoRng>(rng: &mut R, x: &Scalar, ct: &(EdwardsPoint, EdwardsPoint)) -> Proof {
+        let c = ct.0;
+        let m = ct.1 - partial_decrypt(x, ct);
+        assert_eq!(x * c, m);
+        let k = Scalar::random(rng);
+        let (a, b) = (k * G, k * c);
+        let e = fiat_shamir(&a, &b);
+        let s = k + x * e;
+        ((a, b), s)
+    }
+
+    pub fn verify(h: &EdwardsPoint, ct: &(EdwardsPoint, EdwardsPoint), ptxt: &EdwardsPoint, proof: &Proof) -> bool {
+        let ((a, b), s) = proof;
+        let c = ct.0;
+        let m = ct.1 - ptxt;
+        let e = fiat_shamir(&a, &b);
+        (*a == s*G - e*h) && (*b == s*c - e*m)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use curve25519_dalek::traits::Identity;
     use quickcheck::TestResult;
+    use quickcheck_macros::quickcheck;
     use rand_chacha::ChaChaRng;
     use rand_core::SeedableRng;
-    use quickcheck_macros::quickcheck;
+
     use super::*;
 
     #[test]
     fn test_curve_identity() {
         assert_eq!(ORDER * G, EdwardsPoint::identity());
+        assert_eq!(G, EdwardsPoint::identity() + G);
     }
 
     #[quickcheck]
@@ -243,10 +332,7 @@ mod test {
             binary_cipher::encrypt(&mut rng, &pk, *msg)
         }).collect();
 
-        let mut sum_ct = cts[0];
-        for ct in &cts[1..] {
-            sum_ct = add_tuple(ct, &sum_ct);
-        }
+        let sum_ct = sum_tuple(cts.into_iter());
         let pt = binary_cipher::decrypt(&sk, &sum_ct).unwrap();
         let expected = msgs.iter().map(|b| *b as u32).sum();
         TestResult::from_bool(pt == expected)
@@ -313,5 +399,27 @@ mod test {
             assert_eq!(binary_cipher::decrypt(&sk, &ct), Some(pt as u32));
         }
         // TODO(kc1212): test failures
+    }
+
+    #[quickcheck]
+    fn quickcheck_zkp_decryption(msg: bool) -> bool {
+        let mut rng = ChaChaRng::from_entropy();
+        let (sk, pk) = binary_cipher::keygen(&mut rng);
+        let ct = binary_cipher::encrypt(&mut rng, &pk, msg);
+        let proof = zkp_decryption::prove(&mut rng, &sk, &ct);
+
+        let partial_ptxt = binary_cipher::partial_decrypt(&sk, &ct);
+        zkp_decryption::verify(&pk, &ct, &partial_ptxt, &proof)
+    }
+
+    #[quickcheck]
+    fn quickcheck_zkp_decryption_bad_pt(msg: bool) -> bool {
+        let mut rng = ChaChaRng::from_entropy();
+        let (sk, pk) = binary_cipher::keygen(&mut rng);
+        let ct = binary_cipher::encrypt(&mut rng, &pk, msg);
+        let proof = zkp_decryption::prove(&mut rng, &sk, &ct);
+
+        let bad_pt = Scalar::random(&mut rng) * G;
+        !zkp_decryption::verify(&pk, &ct, &bad_pt, &proof)
     }
 }
