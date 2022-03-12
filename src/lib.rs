@@ -17,26 +17,20 @@ mod test {
 
     #[quickcheck]
     fn quickcheck_good_execution(votes: Vec<bool>, trustee_count: usize) -> TestResult {
-        if votes.len() < 1 || votes.len() > 50 {
+        if votes.len() < 2 || votes.len() > 50 {
+        }
+        if trustee_count <  2 || trustee_count > 10 {
             return TestResult::discard();
         }
         let expected: u32 = votes.iter().map(|x| *x as u32).sum();
         TestResult::from_bool(good_execution(votes, trustee_count) == expected)
     }
 
-    #[test]
-    fn test_good_execution() {
-        let votes = vec![true; 10];
-        let trustee_count = 4;
-        let expected: u32 = votes.iter().map(|x| *x as u32).sum();
-        assert_eq!(good_execution(votes, trustee_count), expected)
-    }
-
     fn good_execution(votes: Vec<bool>, trustee_count: usize) -> u32 {
         let voter_count = votes.len();
         let mut rng = ChaChaRng::from_entropy();
         let trustees: Vec<Trustee> = (0..trustee_count).map(|i| Trustee::new(&mut rng, i, trustee_count)).collect();
-        let mut server = polling_station::PollingStation::new(trustee_count);
+        let mut server = polling_station::PollingStation::new(trustee_count, voter_count as u32);
 
         // trustees store public key and the proof on server
         for i in 0..trustee_count {

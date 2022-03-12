@@ -7,9 +7,7 @@ use curve25519_dalek::traits::Identity;
 use rand_core::{CryptoRng, RngCore};
 use sha3::Sha3_512;
 
-const MAX_SUM: u32 = 100;
 pub(crate) const G: EdwardsPoint = constants::ED25519_BASEPOINT_POINT;
-const ORDER: Scalar = constants::BASEPOINT_ORDER;
 const PREFIX_SCHNORR: [u8; 8] = *b"SCHNORRx";
 const PREFIX_ZKP_DL: [u8; 8] = *b"ZKP_DLxx";
 const PREFIX_ZKP_MEMBERSHIP: [u8; 8] = *b"ZKP_MEMB";
@@ -69,10 +67,9 @@ pub mod binary_cipher {
         gv
     }
 
-    pub fn get_ptxt(gv: &EdwardsPoint) -> Option<u32> {
+    pub fn get_ptxt(gv: &EdwardsPoint, max_sum: u32) -> Option<u32> {
         let mut tmp = Scalar::zero();
-        // TODO(kc1212): not constant time
-        for i in 0..MAX_SUM {
+        for i in 0..max_sum {
             if tmp * G == *gv {
                 return Some(i)
             }
@@ -81,9 +78,9 @@ pub mod binary_cipher {
         None
     }
 
-    pub fn decrypt(sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint)) -> Option<u32> {
+    pub fn decrypt(sk: &Scalar, ct: &(EdwardsPoint, EdwardsPoint), max_sum: u32) -> Option<u32> {
         let gv = partial_decrypt(sk, ct);
-        get_ptxt(&gv)
+        get_ptxt(&gv, max_sum)
     }
 }
 
@@ -133,8 +130,8 @@ pub mod schnorr {
     }
 }
 
+// Section 2.1 https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf plus Fiat-Shamir
 pub mod zkp_dl {
-    // Section 2.1 https://hal.inria.fr/hal-01576379/document plus Fiat-Shamir
     use super::*;
     pub type Proof = (EdwardsPoint, Scalar);
 
@@ -165,6 +162,7 @@ pub mod zkp_dl {
     }
 }
 
+// Section 3.1 of https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf plus Fiat-Shamir
 pub mod zkp_binary_ptxt {
     use super::*;
 
@@ -244,7 +242,7 @@ pub mod zkp_binary_ptxt {
     }
 }
 
-// Section 2.2 of https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf
+// Section 2.2 of https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf plus Fiat-Shamir
 pub mod zkp_decryption {
     use super::*;
 
@@ -291,6 +289,9 @@ mod test {
 
     use super::*;
 
+    const ORDER: Scalar = constants::BASEPOINT_ORDER;
+    const MAX_SUM: u32 = 50;
+
     #[test]
     fn test_curve_identity() {
         assert_eq!(ORDER * G, EdwardsPoint::identity());
@@ -302,7 +303,7 @@ mod test {
         let mut rng = ChaChaRng::from_entropy();
         let (sk, pk) = binary_cipher::keygen(&mut rng);
         let ct = binary_cipher::encrypt(&mut rng, &pk, msg);
-        let pt = binary_cipher::decrypt(&sk, &ct).unwrap();
+        let pt = binary_cipher::decrypt(&sk, &ct, MAX_SUM).unwrap();
         msg as u32 == pt
     }
 
@@ -325,7 +326,7 @@ mod test {
         }).collect();
 
         let sum_ct = sum_tuple(cts.into_iter());
-        let pt = binary_cipher::decrypt(&sk, &sum_ct).unwrap();
+        let pt = binary_cipher::decrypt(&sk, &sum_ct, MAX_SUM).unwrap();
         let expected = msgs.iter().map(|b| *b as u32).sum();
         TestResult::from_bool(pt == expected)
     }
@@ -361,7 +362,6 @@ mod test {
 
     #[test]
     fn test_zkp_dl() {
-        // TODO(kc1212): quickcheck
         let mut rng = ChaChaRng::from_entropy();
         let x1 = Scalar::random(&mut rng);
         let h1 = x1 * G;
@@ -373,24 +373,19 @@ mod test {
         assert!(!zkp_dl::verify(&h2, &proof));
     }
 
-    #[test]
-    fn test_zkp_binary_ptxt() {
-        // TODO(kc1212): quickcheck
+    #[quickcheck]
+    fn quickcheck_zkp_binary_ptxt(pt: bool) {
         let mut rng = ChaChaRng::from_entropy();
         let (sk, pk) = binary_cipher::keygen(&mut rng);
-        {
-            let pt = true;
-            let (ct, proof) = zkp_binary_ptxt::prove(&mut rng, &pk, pt);
-            assert!(zkp_binary_ptxt::verify(&pk, &ct, &proof));
-            assert_eq!(binary_cipher::decrypt(&sk, &ct), Some(pt as u32));
-        }
-        {
-            let pt = false;
-            let (ct, proof) = zkp_binary_ptxt::prove(&mut rng, &pk, pt);
-            assert!(zkp_binary_ptxt::verify(&pk, &ct, &proof));
-            assert_eq!(binary_cipher::decrypt(&sk, &ct), Some(pt as u32));
-        }
-        // TODO(kc1212): test failures
+        let (_, bad_pk) = binary_cipher::keygen(&mut rng);
+        let (ct, proof) = zkp_binary_ptxt::prove(&mut rng, &pk, pt);
+        let (bad_ct, bad_proof) = zkp_binary_ptxt::prove(&mut rng, &pk, pt);
+
+        assert!(!zkp_binary_ptxt::verify(&bad_pk, &ct, &proof));
+        assert!(!zkp_binary_ptxt::verify(&pk, &bad_ct, &proof));
+        assert!(!zkp_binary_ptxt::verify(&pk, &ct, &bad_proof));
+        assert!(zkp_binary_ptxt::verify(&pk, &ct, &proof));
+        assert_eq!(binary_cipher::decrypt(&sk, &ct, MAX_SUM), Some(pt as u32));
     }
 
     #[test]
