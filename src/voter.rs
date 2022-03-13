@@ -14,12 +14,6 @@ pub struct Ballot {
     pub(crate) signature: schnorr::Signature,
 }
 
-impl Ballot {
-    pub(crate) fn verify(&self, vk: &EdwardsPoint, pk: &EdwardsPoint) -> bool {
-        schnorr::verify_ct(vk, &self.ct, &self.signature) && zkp_binary_ptxt::verify(pk, &self.ct, &self.proof)
-    }
-}
-
 /// Voter represents the state of a user.
 pub struct Voter {
     sk: Scalar,
@@ -58,7 +52,7 @@ impl Voter {
                 if ballot == &my_ballot {
                     Ok(())
                 } else {
-                    Err(BeleniosError::InvalidVote)
+                    Err(BeleniosError::BadMembershipProof)
                 }
             }
         }
@@ -85,7 +79,7 @@ mod test {
         let mut bad_voter = Voter::new(sk, &pk);
         let bad_ballot_vk = bad_voter.vote(&mut rng, true);
         bb.insert(get_id(&ballot_vk.1), bad_ballot_vk.0);
-        assert_eq!(voter.check_bb(&bb).unwrap_err(), BeleniosError::InvalidVote);
+        assert_eq!(voter.check_bb(&bb).unwrap_err(), BeleniosError::BadMembershipProof);
 
         bb.insert(get_id(&ballot_vk.1), ballot_vk.0);
         assert_eq!(voter.check_bb(&bb).unwrap(), ());

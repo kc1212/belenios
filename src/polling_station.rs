@@ -46,7 +46,10 @@ impl PollingStation {
         -> Result<(), BeleniosError>
     {
         if trustee_id >= self.m {
-            return Err(BeleniosError::InvalidTrusteeID);
+            return Err(BeleniosError::BadTrusteeID);
+        }
+        if commitment.len() != self.m {
+            return Err(BeleniosError::MissingTrusteeCommitments);
         }
         self.trustee_commitment[trustee_id] = Some(commitment);
         Ok(())
@@ -55,13 +58,14 @@ impl PollingStation {
     /// Store the trustee public key and the proof of discrete log.
     pub fn store_trustee_pk_pok(&mut self, trustee_id: usize, pk_pok: (EdwardsPoint, zkp_dl::Proof))
                                 -> Result<(), BeleniosError> {
+        if trustee_id >= self.m {
+            return Err(BeleniosError::BadTrusteeID);
+        }
         let (pk, pok) = pk_pok;
         if !zkp_dl::verify(&pk, &pok) {
             return Err(BeleniosError::BadDiscreteLogProof)
         }
-        if trustee_id >= self.m {
-            return Err(BeleniosError::InvalidTrusteeID);
-        }
+        // TODO(kc1212): allow overwriting?
         self.trustee_pk_pok[trustee_id] = Some(pk_pok);
         Ok(())
     }
@@ -97,10 +101,13 @@ impl PollingStation {
     pub fn add_ballot(&mut self, ballot_vk: (Ballot, EdwardsPoint)) -> Result<(), BeleniosError> {
         let (ballot, vk) = ballot_vk;
         if !self.vks.contains(&vk) {
-            return Err(BeleniosError::VoterDoesNotExist);
+            return Err(BeleniosError::NonExistentVoter);
         }
-        if !ballot.verify(&vk, &self.pk.expect("final pk not computed yet")) {
-            return Err(BeleniosError::InvalidVote)
+        if !schnorr::verify_ct(&vk, &ballot.ct, &ballot.signature) {
+            return Err(BeleniosError::BadVoterSignature)
+        }
+        if !zkp_binary_ptxt::verify(&self.pk.expect("final pk not computed yet"), &ballot.ct, &ballot.proof) {
+            return Err(BeleniosError::BadMembershipProof)
         }
         // TODO(kc1212): log that an old entry is replaced
         let _ = self.bb.insert(get_id(&vk), ballot);
@@ -127,12 +134,12 @@ impl PollingStation {
                                 -> Result<(), BeleniosError> {
         let ct = self.tally.expect("votes are not tallied");
         let pk_i = self.trustee_pk_pok[trustee_id].expect("trustee pk and pok not stored").0;
+        if trustee_id >= self.m {
+            return Err(BeleniosError::BadTrusteeID);
+        }
         let (m, pok) = res_pok;
         if !zkp_decryption::verify(&pk_i, &ct.0, &m, &pok) {
             return Err(BeleniosError::BadDecryptionProof)
-        }
-        if trustee_id >= self.m {
-            return Err(BeleniosError::InvalidTrusteeID);
         }
         self.trustee_res_pok[trustee_id] = Some(res_pok);
         Ok(())
@@ -146,10 +153,10 @@ impl PollingStation {
             let (tmp, _) = o.expect("trustee partial decryption missing");
             a += tmp;
         }
-        brute_force_dlog(&(b-a), self.pt_upper_bound).ok_or(BeleniosError::CannotDecrypt)
+        brute_force_dlog(&(b-a), self.pt_upper_bound).ok_or(BeleniosError::BadDecryption)
     }
 
-    // Store the voter verification keys.
+    // Store the voter verification keys, given by the registrar.
     pub fn store_vks(&mut self, vks: Vec<EdwardsPoint>) {
         if vks.len() > self.pt_upper_bound {
             panic!("too many verification keys");
@@ -162,8 +169,69 @@ impl PollingStation {
         &self.bb
     }
 
-    /// Output the trustee commitments.
+    /// Output a reference to the trustee commitments.
     pub fn get_commitments(&self) -> &Vec<Option<Vec<EdwardsPoint>>> {
         &self.trustee_commitment
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use curve25519_dalek::scalar::Scalar;
+    use rand_chacha::ChaChaRng;
+    use rand_core::SeedableRng;
+    use super::*;
+
+    #[test]
+    fn test_polling_station() {
+        let mut ps = PollingStation::new(2, 10);
+
+        // testing that bad trustee commitments are not stored
+        assert_eq!(ps.store_trustee_commitment(2, vec![]).unwrap_err(), BeleniosError::BadTrusteeID);
+        assert_eq!(ps.store_trustee_commitment(0, vec![]).unwrap_err(), BeleniosError::MissingTrusteeCommitments);
+        ps.store_trustee_commitment(0, vec![EdwardsPoint::identity(), EdwardsPoint::identity()]).unwrap();
+        ps.store_trustee_commitment(1, vec![EdwardsPoint::identity(), EdwardsPoint::identity()]).unwrap();
+
+        // testing that bad trustee public key and pok are not stored
+        let mut rng = ChaChaRng::from_entropy();
+        let x = Scalar::random(&mut rng);
+        let h = x * G;
+        let bad_h = (x+x) * G;
+        let proof = zkp_dl::prove(&mut rng, &x);
+        assert_eq!(ps.store_trustee_pk_pok(2, (h, proof.clone())).unwrap_err(), BeleniosError::BadTrusteeID);
+        assert_eq!(ps.store_trustee_pk_pok(1, (bad_h, proof.clone())).unwrap_err(), BeleniosError::BadDiscreteLogProof);
+        ps.store_trustee_pk_pok(1, (h, proof.clone())).unwrap();
+
+        // setting up some ballots and testing whether they are accepted by the polling station
+        let (sk, vk) = schnorr::keygen(&mut rng);
+        let (ct, proof) = zkp_binary_ptxt::prove(&mut rng, &h, true);
+        let (bad_ct, bad_proof) = zkp_binary_ptxt::prove(&mut rng, &bad_h, true);
+        let bad_signature_ballot = Ballot {
+            ct,
+            proof,
+            signature: schnorr::sign_ct(&mut rng, &sk, &bad_ct)
+        };
+        let bad_proof_ballot = Ballot {
+            ct,
+            proof: bad_proof,
+            signature: schnorr::sign_ct(&mut rng, &sk, &ct)
+        };
+        let ballot = Ballot {
+            ct,
+            proof,
+            signature: schnorr::sign_ct(&mut rng, &sk, &ct)
+        };
+        assert_eq!(ps.add_ballot((bad_signature_ballot, vk)).unwrap_err(), BeleniosError::NonExistentVoter);
+        ps.store_vks(vec![vk]);
+        assert_eq!(ps.add_ballot((bad_signature_ballot, vk)).unwrap_err(), BeleniosError::BadVoterSignature);
+        // fake the public key so that we can check the tally
+        ps.pk = Some(h);
+        assert_eq!(ps.add_ballot((bad_proof_ballot, vk)).unwrap_err(), BeleniosError::BadMembershipProof);
+        ps.add_ballot((ballot, vk)).unwrap();
+
+        // check tallying
+        let tally = ps.tally().unwrap();
+        assert_eq!(tally, ballot.ct);
+        assert_eq!(ps.tally().unwrap_err(), BeleniosError::AlreadyTallied);
     }
 }

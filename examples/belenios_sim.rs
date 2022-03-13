@@ -31,20 +31,48 @@ fn trustee_in_range(s: &str) -> Result<(), String> {
         })
 }
 
+fn turnout_rate_in_range(s: &str) -> Result<(), String> {
+    f64::from_str(s)
+        .map_err(|e| e.to_string())
+        .and_then(|r| if r < 0.0 || r  > 1.0 {
+            Err(format!("turnout rate must be between 0 and 1"))
+        } else {
+            Ok(())
+        })
+}
+
+fn println_vec_bool(xs: &Vec<bool>) {
+    const MAX: usize = 20;
+    for (i, x) in xs.iter().enumerate() {
+        if i > MAX {
+            return;
+        }
+        print!("{} ", *x as u8);
+    }
+    println!();
+}
+
 #[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
+#[clap(author, version, about="A simulation of the Belenios voting system.", long_about = None)]
 struct Cli {
-    #[clap(validator=voter_in_range, short, long, default_value_t = 10)]
+    #[clap(validator=trustee_in_range, short, long, default_value_t = 4,
+    help="The number of trustees.")]
+    trustee_count: usize,
+
+    #[clap(validator=voter_in_range, short, long, default_value_t = 10,
+        help="The number of voters.")]
     voter_count: usize,
 
-    #[clap(validator=trustee_in_range, short, long, default_value_t = 4)]
-    trustee_count: usize,
+    #[clap(validator=turnout_rate_in_range, short='r', long, default_value_t = 0.5,
+    help="The turnout rate as a float.")]
+    turnout_rate: f64,
 }
 
 fn main() {
     let cli = Cli::parse();
     let voter_count = cli.voter_count;
     let trustee_count = cli.trustee_count;
+    let turnout_count = (voter_count as f64 * cli.turnout_rate) as usize;
     let upper_bound = voter_count + 1;
     let mut rng = ChaChaRng::from_entropy();
 
@@ -80,10 +108,11 @@ fn main() {
     let mut voters: Vec<Voter> = sks.into_iter().map(|sk| Voter::new(sk, &pk)).collect();
     server.store_vks(vks);
 
-    let votes: Vec<bool> = (0..voter_count).into_iter().map(|_| {
+    let votes: Vec<bool> = (0..turnout_count).into_iter().map(|_| {
         rng.next_u32() % 2 == 0
     }).collect();
-    println!("generated votes {:?}", votes);
+    println!("generated {} votes:", votes.len());
+    println_vec_bool(&votes);
 
     println!("casting ballots");
     for (voter, vote) in (&mut voters).iter_mut().zip(votes) {
@@ -92,7 +121,7 @@ fn main() {
     }
 
     println!("voters checking the bulletin board");
-    for voter in &voters {
+    for voter in &voters[0..turnout_count] {
         voter.check_bb(server.get_bb()).unwrap();
     }
 

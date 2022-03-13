@@ -39,7 +39,7 @@ impl Trustee {
     /// Output a share for the trustee with `receiver_id`.
     pub fn distribute_share(&self, receiver_id: usize) -> Result<Scalar, BeleniosError> {
         if receiver_id >= self.m {
-            Err(BeleniosError::InvalidTrusteeID)
+            Err(BeleniosError::BadTrusteeID)
         } else {
             Ok(self.shares[receiver_id])
         }
@@ -48,7 +48,7 @@ impl Trustee {
     /// Store a share for the trustee with `sender_id`.
     pub fn store_share(&mut self, sender_id: usize, share: Scalar) -> Result<(), BeleniosError> {
         if sender_id >= self.m {
-            return Err(BeleniosError::InvalidTrusteeID);
+            return Err(BeleniosError::BadTrusteeID);
         }
         self.their_shares[sender_id] = Some(share);
         Ok(())
@@ -111,9 +111,9 @@ mod test {
         let mut trustee_0 = Trustee::new(&mut rng, 0, 2);
         let mut trustee_1 = Trustee::new(&mut rng, 1, 2);
 
-        assert_eq!(trustee_0.distribute_share(2).unwrap_err(), BeleniosError::InvalidTrusteeID);
+        assert_eq!(trustee_0.distribute_share(2).unwrap_err(), BeleniosError::BadTrusteeID);
         assert_eq!(trustee_1.store_share(2, trustee_0.distribute_share(1).unwrap()).unwrap_err(),
-            BeleniosError::InvalidTrusteeID);
+            BeleniosError::BadTrusteeID);
 
         trustee_0.store_share(0, trustee_0.distribute_share(0).unwrap()).unwrap();
         trustee_0.store_share(1, trustee_1.distribute_share(0).unwrap()).unwrap();
