@@ -17,6 +17,8 @@ Use the `--release` flag for better performance.
 this is also known as the full threshold setting.
 As a result, there is no need to use Shamir secret sharing for trustee's initial secret,
 we just use additive secret sharing.
+- Only the basic protocol from the [paper](https://hal.inria.fr/hal-02066930/document) is implemented, 
+not the one from the [specification](https://www.belenios.org/specification.pdf).
 - This is a toy implementation (not constant time, not side-channel resistant or thoroughly tested, etc.)
 
 ## Resources
