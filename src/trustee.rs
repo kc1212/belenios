@@ -37,6 +37,9 @@ impl Trustee {
     }
 
     /// Output a share for the trustee with `receiver_id`.
+    ///
+    /// # Arguments
+    /// * `receiver_id` - The identity of the trustee that's receiving the share.
     pub fn distribute_share(&self, receiver_id: usize) -> Result<Scalar, BeleniosError> {
         if receiver_id >= self.m {
             Err(BeleniosError::BadTrusteeID)
@@ -46,6 +49,10 @@ impl Trustee {
     }
 
     /// Store a share for the trustee with `sender_id`.
+    ///
+    /// # Arguments
+    /// * `sender_id` - The identity of the trustee who sent the share.
+    /// *  `share` - An additive share.
     pub fn store_share(&mut self, sender_id: usize, share: Scalar) -> Result<(), BeleniosError> {
         if sender_id >= self.m {
             return Err(BeleniosError::BadTrusteeID);
@@ -61,6 +68,10 @@ impl Trustee {
 
     /// Check the commitments and then publish
     /// the public key and the discrete log proof.
+    ///
+    /// # Arguments
+    /// * `rng` - A cryptographic PRNG.
+    /// * `commitments` - The full set of commitments, obtained from the polling station.
     pub fn publish_pk_pok<R: RngCore + CryptoRng>(&mut self, rng: &mut R, commitments: &Vec<Option<Vec<EdwardsPoint>>>)
         -> Result<(EdwardsPoint, (EdwardsPoint, Scalar)), BeleniosError> {
         self.check_commitment(commitments)?;
@@ -77,6 +88,10 @@ impl Trustee {
 
     /// Perform a partial decryption
     /// and output the result with a proof of decryption.
+    ///
+    /// # Arguments
+    /// * `rng` - A cryptographic PRNG.
+    /// * `ct` - The ciphertext to decrypt, usually the encrypted tally.
     pub fn partial_decrypt_pok<R: CryptoRng + RngCore>(&self, rng: &mut R, ct: &(EdwardsPoint, EdwardsPoint)) -> (EdwardsPoint, zkp_decryption::Proof) {
         let dk = self.dk_i.expect("dk_i not yet computed");
         let m = dk * ct.0;

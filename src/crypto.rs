@@ -179,7 +179,7 @@ pub mod schnorr {
 
 /// Zero knowledge proof of knowledge of a discrete log relation.
 /// Implemented according to
-/// Section 2.1 https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf plus Fiat-Shamir.
+/// Section 2.1 <https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf> plus Fiat-Shamir.
 pub mod zkp_dl {
     use super::*;
 
@@ -224,7 +224,7 @@ pub mod zkp_dl {
 
 /// Zero knowledge proof of a binary plaintext in an ElGamal ciphertext.
 /// Implemented according to
-// Section 3.1 of https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf plus Fiat-Shamir.
+// Section 3.1 of <https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf> plus Fiat-Shamir.
 pub mod zkp_binary_ptxt {
     use super::*;
 
@@ -320,7 +320,7 @@ pub mod zkp_binary_ptxt {
 /// Zero knowledge proof of the relation c^x = m where x is the witness.
 /// The public values are c, m and h=g^x.
 /// Implemented according to
-/// Section 2.2 of https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf plus Fiat-Shamir.
+/// Section 2.2 of <https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf> plus Fiat-Shamir.
 pub mod zkp_decryption {
     use super::*;
 

@@ -42,6 +42,10 @@ impl PollingStation {
 
     /// Store the commitments from the trustees, must be performed during the
     /// election key generation phase.
+    ///
+    /// # Arguments
+    /// * `trustee_id` - The identity of the trustee.
+    /// * `commitment` - Commitments of the secret shares from the trustee.
     pub fn store_trustee_commitment(&mut self, trustee_id: usize, commitment: Vec<EdwardsPoint>)
         -> Result<(), BeleniosError>
     {
@@ -56,6 +60,10 @@ impl PollingStation {
     }
 
     /// Store the trustee public key and the proof of discrete log.
+    ///
+    /// # Arguments
+    /// * `trustee_id` - The identity of the trustee.
+    /// * `pk_pok` - A tuple of public key along with a discrete log proof on the public key.
     pub fn store_trustee_pk_pok(&mut self, trustee_id: usize, pk_pok: (EdwardsPoint, zkp_dl::Proof))
                                 -> Result<(), BeleniosError> {
         if trustee_id >= self.m {
@@ -98,6 +106,10 @@ impl PollingStation {
     }
 
     /// Add a ballot along with the verification key to the bulletin board.
+    ///
+    /// # Arguments
+    /// * `ballot_vk` - The voter's ballot along with the verification key of the voter,
+    /// the verification key must be registered for the ballot to be approved.
     pub fn add_ballot(&mut self, ballot_vk: (Ballot, EdwardsPoint)) -> Result<(), BeleniosError> {
         let (ballot, vk) = ballot_vk;
         if !self.vks.contains(&vk) {
@@ -130,6 +142,10 @@ impl PollingStation {
 
     /// Store the trustee partial decryption and the proof of decryption.
     /// This function must be called after `store_trustee_pk_pok` and `tally`.
+    ///
+    /// # Arguments
+    /// * `trustee_id` - The identity of the trustee.
+    /// * `res_pok` - The partial decryption from the trustee along with a proof of decryption.
     pub fn store_trustee_res_pok(&mut self, trustee_id: usize, res_pok: (EdwardsPoint, zkp_decryption::Proof))
                                 -> Result<(), BeleniosError> {
         let ct = self.tally.expect("votes are not tallied");
@@ -156,7 +172,10 @@ impl PollingStation {
         brute_force_dlog(&(b-a), self.pt_upper_bound).ok_or(BeleniosError::BadDecryption)
     }
 
-    // Store the voter verification keys, given by the registrar.
+    /// Store the voter verification keys, given by the registrar.
+    ///
+    /// # Argument
+    /// * `vks` - A set of verification keys.
     pub fn store_vks(&mut self, vks: Vec<EdwardsPoint>) {
         if vks.len() > self.pt_upper_bound {
             panic!("too many verification keys");
