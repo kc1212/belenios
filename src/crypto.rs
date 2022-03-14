@@ -224,7 +224,7 @@ pub mod zkp_dl {
 
 /// Zero knowledge proof of a binary plaintext in an ElGamal ciphertext.
 /// Implemented according to
-// Section 3.1 of <https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf> plus Fiat-Shamir.
+/// Section 3.1 of <https://hal.inria.fr/hal-01576379/file/ZK-securityproof.pdf> plus Fiat-Shamir.
 pub mod zkp_binary_ptxt {
     use super::*;
 

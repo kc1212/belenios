@@ -45,6 +45,7 @@ fn println_vec_bool(xs: &Vec<bool>) {
     const MAX: usize = 20;
     for (i, x) in xs.iter().enumerate() {
         if i > MAX {
+            println!("...");
             return;
         }
         print!("{} ", *x as u8);
