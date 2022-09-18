@@ -13,8 +13,7 @@ Use the `--release` flag for better performance.
 
 ## Limitations
 - Only binary votes are supported.
-- All trustees need to be online to decrypt the ballot,
-this is also known as the full threshold setting.
+- All trustees need to be online to decrypt the ballot.
 As a result, there is no need to use Shamir secret sharing for trustee's initial secret,
 we just use additive secret sharing.
 - Only the basic protocol from the [paper](https://hal.inria.fr/hal-02066930/document) is implemented, 
